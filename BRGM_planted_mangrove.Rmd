@@ -1,0 +1,261 @@
+---
+title: "Untitled"
+author: "Erlangga"
+date: "2025-09-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+library(dplyr)
+library(stringr)
+library(sf)
+library(leaflet)
+library(htmltools)
+library(leafem)
+library(htmlwidgets)
+
+# Load CSV mangrove planted data
+BRGM_rehab <- read_csv("BRGM_planted_mangrove.csv")
+
+# Clean 'hectares' to numeric (remove commas/spaces)
+BRGM_rehab <- BRGM_rehab %>%
+  mutate(hectares_num = as.numeric(gsub("[,\\s]", "", hectares)))
+
+# Summarize total hectares and years by province
+location_summary <- BRGM_rehab %>%
+  group_by(Province) %>%
+  summarise(
+    total_hectare = sum(hectares_num, na.rm = TRUE),
+    years = paste(sort(unique(year)), collapse = ", "),
+    .groups = "drop"
+  ) %>%
+  mutate(province_clean = str_to_lower(str_trim(Province)))
+
+# Read new province shapefile and transform CRS
+province_sf <- st_read("INDO_PROV.shp") %>%
+  st_transform(crs = 4326)
+
+# Fix invalid geometries
+province_sf_valid <- sf::st_make_valid(province_sf)
+
+# If multiple polygons per province, dissolve here (optional)
+# For this shapefile, if already province-level polygons, this may not be needed
+
+# Clean province name column for join
+province_sf_valid <- province_sf_valid %>%
+  mutate(province_clean = str_to_lower(str_trim(nmprov)))
+
+# Join CSV summary data to province polygons by cleaned name
+joined_sf <- province_sf_valid %>%
+  left_join(location_summary, by = "province_clean")
+
+# Replace NA values with defaults for mapping
+joined_sf$total_hectare[is.na(joined_sf$total_hectare)] <- 0
+joined_sf$years[is.na(joined_sf$years)] <- "No data"
+
+# Create color palette for total hectares
+pal <- colorNumeric("Blues", domain = joined_sf$total_hectare, na.color = "lightgrey")
+
+# Build Leaflet map
+map_BRGM <- leaflet(joined_sf) %>%
+  addTiles() %>%
+  addPolygons(
+    fillColor = ~pal(total_hectare),
+    color = "blue",
+    weight = 1,
+    fillOpacity = 0.5,
+    popup = ~paste0(
+      "<b>", nmprov, "</b><br>",
+      "Years: ", years, "<br>",
+      "Total Planted Area: ", format(total_hectare, big.mark = ","), " Hectares"
+    )
+  ) %>%
+  addLegend(
+    "bottomright",
+    pal = pal,
+    values = ~total_hectare,
+    title = "Planted Area (Hectares)",
+    opacity = 0.7
+  ) %>%
+  addMouseCoordinates() %>%
+  addMiniMap(tiles = providers$OpenStreetMap, position = "bottomleft")
+
+map_BRGM
+
+library(htmlwidgets)
+
+# Assuming your leaflet map object is named 'map'
+saveWidget(map_BRGM, file = "index.html", selfcontained = TRUE)
+
+# Save the widget with external supporting files directory
+saveWidget(map_BRGM,
+           file = "index.html",
+           selfcontained = TRUE,
+           libdir = "BRGM_files")
+
+```
+
+```{r}
+library(readr)
+library(dplyr)
+library(stringr)
+library(sf)
+library(leaflet)
+library(htmltools)
+library(leafem)
+library(htmlwidgets)
+
+# Load CSV mangrove planted data
+BRGM_rehab <- read_csv("BRGM_planted_mangrove.csv")
+
+# Clean 'hectares' to numeric (remove commas/spaces)
+BRGM_rehab <- BRGM_rehab %>%
+  mutate(hectares_num = as.numeric(gsub("[,\\s]", "", hectares)))
+
+# Summarize total hectares and years by province
+location_summary <- BRGM_rehab %>%
+  group_by(Province) %>%
+  summarise(
+    total_hectare = sum(hectares_num, na.rm = TRUE),
+    years = paste(sort(unique(year)), collapse = ", "),
+    .groups = "drop"
+  ) %>%
+  mutate(province_clean = str_to_lower(str_trim(Province)))
+
+# Read province shapefile and transform CRS
+province_sf <- st_read("INDO_PROV.shp") %>%
+  st_transform(crs = 4326)
+
+# Fix invalid geometries and clean province name for join
+province_sf_valid <- sf::st_make_valid(province_sf) %>%
+  mutate(province_clean = str_to_lower(str_trim(nmprov)))
+
+# Join CSV summary data to province polygons by cleaned name
+joined_sf <- province_sf_valid %>%
+  left_join(location_summary, by = "province_clean")
+
+# Replace NA values with defaults for mapping
+joined_sf$total_hectare[is.na(joined_sf$total_hectare)] <- 0
+joined_sf$years[is.na(joined_sf$years)] <- "No data"
+
+# Create color palette for total hectares
+pal <- colorNumeric("Blues", domain = joined_sf$total_hectare, na.color = "lightgrey")
+
+# Compute centroids for each province polygon
+centroids <- st_centroid(joined_sf)
+coords <- st_coordinates(centroids)
+
+# Build Leaflet map using province centroids
+map_BRGM_centroid <- leaflet(centroids) %>%
+  addTiles() %>%
+  addCircleMarkers(
+    lng = coords[, 1],
+    lat = coords[, 2],
+    radius = 8,
+    fillColor = ~pal(total_hectare),
+    fillOpacity = 0.8,
+    color = "blue",
+    weight = 1,
+    label = ~nmprov,
+    popup = ~paste0(
+      "<b>", nmprov, "</b><br>",
+      "Years: ", years, "<br>",
+      "Total Planted Area: ", format(total_hectare, big.mark = ","), " Hectares"
+    )
+  ) %>%
+  addLegend(
+    "bottomright",
+    pal = pal,
+    values = ~total_hectare,
+    title = "Planted Area (Hectares)",
+    opacity = 0.7
+  ) %>%
+  addMouseCoordinates() %>%
+  addMiniMap(tiles = providers$OpenStreetMap, position = "bottomleft")
+
+# Render map in RStudio/viewer
+map_BRGM_centroid
+
+# Export static or interactive html widget
+saveWidget(map_BRGM_centroid, file = "index_centroid.html", selfcontained = TRUE)
+saveWidget(map_BRGM_centroid, file = "index_centroid.html", selfcontained = TRUE, libdir = "BRGM_files")
+
+```
+
+
+```{r}
+library(sf)
+library(dplyr)
+library(maps)
+library(stringr)
+library(RColorBrewer)   # For palettes
+
+# Load data (similar to your previous code)
+# Assuming joined_sf includes province polygons and total_hectare
+
+# Define color palette - Blues from RColorBrewer instead of viridis
+pal_colors <- colorRampPalette(brewer.pal(9, "Blues"))(100)
+
+# Calculate province polygon areas (optional, can standardize colors by area)
+joined_sf <- joined_sf %>%
+  mutate(area_km2 = as.numeric(st_area(geometry)) / 1e6)  # convert m2 to km2
+
+# Color scale domain can be adjusted - here by total_hectare absolute or ratio to area
+color_domain <- range(joined_sf$total_hectare, na.rm = TRUE)
+
+# Create color indices for each polygon according to total_hectare
+color_indices <- findInterval(joined_sf$total_hectare, seq(color_domain[1], color_domain[2], length.out = 100))
+
+# Set up plot region and background as your example
+min_lon <- 90; max_lon <- 150
+min_lat <- -15; max_lat <- 15
+
+pdf("BRGM_mangrove_rehabilitation_21-23.pdf", width = 10, height = 7)
+old_par <- par(no.readonly = TRUE)
+par(xaxs = "i", yaxs = "i")
+plot(NA, xlim = c(min_lon, max_lon), ylim = c(min_lat, max_lat),
+     type = "n", xlab = "", ylab = "", axes = FALSE)
+rect(min_lon, min_lat, max_lon, max_lat, col = "lightblue", border = NA)
+map("world", xlim = c(min_lon, max_lon), ylim = c(min_lat, max_lat),
+    col = "grey85", fill = TRUE, add = TRUE)
+abline(v = seq(min_lon, max_lon, 4), col = "grey70", lty = 3)
+abline(h = seq(min_lat, max_lat, 4), col = "grey70", lty = 3)
+axis(1, at = seq(min_lon, max_lon, 4), labels = paste0(seq(min_lon, max_lon, 4), "°E"), cex.axis = 0.7)
+axis(2, at = seq(min_lat, max_lat, 4), labels = paste0(abs(seq(min_lat, max_lat, 4)), 
+     ifelse(seq(min_lat, max_lat, 4) < 0, "°S", "°N")), cex.axis = 0.7)
+
+# Plot provinces polygons colored by total_hectare
+plot(st_geometry(joined_sf), col = pal_colors[color_indices], border = "blue", add = TRUE)
+
+# Legend (color gradient bar) - custom similar to your example
+colorbar_x <- max_lon - 10
+colorbar_y_bottom <- min_lat + 2
+colorbar_y_top <- colorbar_y_bottom + 8
+
+rect(colorbar_x - 0.2, colorbar_y_bottom - 0.2, colorbar_x + 3.5, colorbar_y_top + 1, col = "white", border = NA)
+legend_image <- as.raster(matrix(rev(pal_colors), ncol = 1))
+rasterImage(legend_image, colorbar_x, colorbar_y_bottom, colorbar_x + 1, colorbar_y_top)
+text(colorbar_x + 2, seq(colorbar_y_bottom, colorbar_y_top, length.out = 5),
+     labels = round(seq(color_domain[1], color_domain[2], length.out = 5)), cex = 0.7, adj = 0)
+text(colorbar_x + 0.5, colorbar_y_top + 0.8, "Planted Area (Hectares)", cex = 0.8)
+
+# Scale bar and north arrow (as in your example)
+scalebar_length <- 200
+scalebar_x <- min_lon + 1
+scalebar_y <- min_lat + 1
+rect(scalebar_x, scalebar_y, scalebar_x + 2, scalebar_y + 0.2, col = "black")
+text(scalebar_x + 1, scalebar_y - 0.4, paste0(scalebar_length, " km"), adj = 0.5, cex = 0.7)
+north_x <- max_lon - 1.5
+north_N_y <- max_lat - 1
+text(north_x, north_N_y, "N", cex = 1.1, font = 2)
+
+par(old_par)
+dev.off()
+
+```
+
